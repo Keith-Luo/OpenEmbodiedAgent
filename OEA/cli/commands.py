@@ -210,60 +210,48 @@ def onboard():
     console.print("\n[dim]Want Telegram/WhatsApp? See: https://github.com/HKUDS/OEA#-chat-apps[/dim]")
 
 
-
 def _make_provider(config: Config):
     """Create the appropriate LLM provider from config."""
-    from OEA.providers.azure_openai_provider import AzureOpenAIProvider
+    from OEA.providers.base import GenerationSettings
     from OEA.providers.openai_codex_provider import OpenAICodexProvider
+    from OEA.providers.azure_openai_provider import AzureOpenAIProvider
 
-    def _create_provider(model):
-        provider_name = config.get_provider_name(model)
-        p = config.get_provider(model)
+    model = config.agents.defaults.model
+    provider_name = config.get_provider_name(model)
+    p = config.get_provider(model)
 
-        # OpenAI Codex (OAuth)
-        if provider_name == "openai_codex" or model.startswith("openai-codex/"):
-            return OpenAICodexProvider(default_model=model)
-
-        # Custom: direct OpenAI-compatible endpoint, bypasses LiteLLM
+    # OpenAI Codex (OAuth)
+    if provider_name == "openai_codex" or model.startswith("openai-codex/"):
+        provider = OpenAICodexProvider(default_model=model)
+    # Custom: direct OpenAI-compatible endpoint, bypasses LiteLLM
+    elif provider_name == "custom":
         from OEA.providers.custom_provider import CustomProvider
-
-        if provider_name == "custom":
-            return CustomProvider(
-                api_key=p.api_key if p else "no-key",
-                api_base=config.get_api_base(model) or "http://localhost:8000/v1",
-                default_model=model,
-            )
-
-        # Azure OpenAI: direct Azure OpenAI endpoint with deployment name
-        if provider_name == "azure_openai":
-            if not p or not p.api_key or not p.api_base:
-                console.print("[red]Error: Azure OpenAI requires api_key and api_base.[/red]")
-                console.print(
-                    "Set them in ~/.OEA/config.json under providers.azure_openai section"
-                )
-                console.print("Use the model field to specify the deployment name.")
-                raise typer.Exit(1)
-
-            return AzureOpenAIProvider(
-                api_key=p.api_key,
-                api_base=p.api_base,
-                default_model=model,
-            )
-
+        provider = CustomProvider(
+            api_key=p.api_key if p else "no-key",
+            api_base=config.get_api_base(model) or "http://localhost:8000/v1",
+            default_model=model,
+        )
+    # Azure OpenAI: direct Azure OpenAI endpoint with deployment name
+    elif provider_name == "azure_openai":
+        if not p or not p.api_key or not p.api_base:
+            console.print("[red]Error: Azure OpenAI requires api_key and api_base.[/red]")
+            console.print("Set them in ~/.OEA/config.json under providers.azure_openai section")
+            console.print("Use the model field to specify the deployment name.")
+            raise typer.Exit(1)
+        provider = AzureOpenAIProvider(
+            api_key=p.api_key,
+            api_base=p.api_base,
+            default_model=model,
+        )
+    else:
         from OEA.providers.litellm_provider import LiteLLMProvider
         from OEA.providers.registry import find_by_name
-
         spec = find_by_name(provider_name)
-        if (
-            not model.startswith("bedrock/")
-            and not (p and p.api_key)
-            and not (spec and spec.is_oauth)
-        ):
+        if not model.startswith("bedrock/") and not (p and p.api_key) and not (spec and (spec.is_oauth or spec.is_local)):
             console.print("[red]Error: No API key configured.[/red]")
             console.print("Set one in ~/.OEA/config.json under providers section")
             raise typer.Exit(1)
-
-        return LiteLLMProvider(
+        provider = LiteLLMProvider(
             api_key=p.api_key if p else None,
             api_base=config.get_api_base(model),
             default_model=model,
@@ -271,15 +259,13 @@ def _make_provider(config: Config):
             provider_name=provider_name,
         )
 
-    if not config.agents.modes.enabled:
-        return _create_provider(config.agents.defaults.model)
-    from OEA.providers.providers_manager import ProvidersManager
-
-    modes = {
-        k: {"provider": _create_provider(v.model), "describe": v.describe}
-        for k, v in config.agents.modes.models.items()
-    }
-    return ProvidersManager(config, modes, default_mode=config.agents.modes.default_mode)
+    defaults = config.agents.defaults
+    provider.generation = GenerationSettings(
+        temperature=defaults.temperature,
+        max_tokens=defaults.max_tokens,
+        reasoning_effort=defaults.reasoning_effort,
+    )
+    return provider
 
 
 def _load_runtime_config(config: str | None = None, workspace: str | None = None) -> Config:
@@ -596,11 +582,11 @@ def agent(
         signal.signal(signal.SIGINT, _handle_signal)
         signal.signal(signal.SIGTERM, _handle_signal)
         # SIGHUP is not available on Windows
-        if hasattr(signal, "SIGHUP"):
+        if hasattr(signal, 'SIGHUP'):
             signal.signal(signal.SIGHUP, _handle_signal)
         # Ignore SIGPIPE to prevent silent process termination when writing to closed pipes
         # SIGPIPE is not available on Windows
-        if hasattr(signal, "SIGPIPE"):
+        if hasattr(signal, 'SIGPIPE'):
             signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 
         async def run_interactive():

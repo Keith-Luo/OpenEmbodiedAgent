@@ -24,6 +24,12 @@ class EmbodiedActionTool(Tool):
     if the validation passes.
     """
 
+    name = "execute_robot_action"
+    description = (
+        "Execute a physical action on the robot. "
+        "The action will be validated by a Critic before execution."
+    )
+
     def __init__(self, workspace: Path, provider: LLMProvider, model: str):
         self.workspace = workspace
         self.provider = provider
@@ -65,6 +71,37 @@ class EmbodiedActionTool(Tool):
                 },
             },
             "required": ["action_type", "parameters", "reasoning"],
+    def to_schema(self) -> dict[str, Any]:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action_type": {
+                            "type": "string",
+                            "description": (
+                                "The type of action to execute "
+                                "(e.g., 'point_to', 'move_to', 'pick_up')."
+                            ),
+                        },
+                        "parameters": {
+                            "type": "object",
+                            "description": (
+                                "The parameters for the action "
+                                "(e.g., {'x': 10, 'y': 20, 'z': 0})."
+                            ),
+                        },
+                        "reasoning": {
+                            "type": "string",
+                            "description": "The reasoning behind choosing this action.",
+                        },
+                    },
+                    "required": ["action_type", "parameters", "reasoning"],
+                },
+            },
         }
 
     async def execute(
@@ -176,4 +213,3 @@ class EmbodiedActionTool(Tool):
             "This failure has been recorded in LESSONS.md. "
             "Please read it and try a different approach."
         )
-

@@ -147,6 +147,12 @@ class AgentLoop:
                 provider=self.provider,
                 model=self.model,
             ))
+        # Embodied action tool (Critic-gated hardware dispatch)
+        self.tools.register(EmbodiedActionTool(
+            workspace=self.workspace,
+            provider=self.provider,
+            model=self.model,
+        ))
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""
