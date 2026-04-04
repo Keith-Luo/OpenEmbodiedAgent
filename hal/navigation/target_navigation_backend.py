@@ -30,11 +30,18 @@ class TargetNavigationBackend:
         else:
             self._bridge = SimulatedRobotBridge()
         self._engine = NavigationEngine(self._bridge)
-        self._connected = True
-        return True
+        ready = self._wait_until_ready()
+        self._connected = bool(ready.get("ok"))
+        if not self._connected:
+            self._last_status = {
+                "phase": "blocked",
+                "message": ready.get("reason", "target navigation backend not ready"),
+            }
+            self.disconnect()
+        return self._connected
 
     def disconnect(self) -> None:
-        if not self._connected:
+        if not self._connected and self._bridge is None:
             return
         bridge = self._bridge
         if bridge is not None:
@@ -57,6 +64,8 @@ class TargetNavigationBackend:
                 except Exception:
                     pass
         self._connected = False
+        self._bridge = None
+        self._engine = None
 
     def health_check(self) -> dict[str, Any]:
         if not self._connected:
@@ -73,7 +82,11 @@ class TargetNavigationBackend:
         return {"connected": True, "status": "connected"}
 
     def run_navigation(self, params: dict[str, Any]) -> dict[str, Any]:
-        self.connect()
+        if not self.connect():
+            return self._last_status or {
+                "phase": "blocked",
+                "message": "target navigation backend not ready",
+            }
         assert self._engine is not None
         target_label = str(params.get("target_label", "")).strip()
         if not target_label:
@@ -193,9 +206,9 @@ class TargetNavigationBackend:
 
     @staticmethod
     def _timestamp() -> str:
-        from datetime import datetime
+        from datetime import datetime, timezone
 
-        return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+        return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     def _latest_observation(self) -> Any:
         if self._bridge is None:
@@ -207,6 +220,17 @@ class TargetNavigationBackend:
             return get_observation()
         except Exception:
             return None
+
+    def _wait_until_ready(self) -> dict[str, Any]:
+        if self._bridge is None:
+            return {"ok": False, "reason": "bridge_uninitialized"}
+        wait_until_ready = getattr(self._bridge, "wait_until_ready", None)
+        if not callable(wait_until_ready):
+            return {"ok": True}
+        try:
+            return wait_until_ready()
+        except Exception as exc:
+            return {"ok": False, "reason": f"bridge_ready_check_failed: {exc}"}
 
     @staticmethod
     def _phase_to_status(phase: str | None) -> str:

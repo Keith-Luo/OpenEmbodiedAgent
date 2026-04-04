@@ -15,7 +15,8 @@ from hal.perception.target_detector import TargetDetector
 class NavigationEngine:
     def __init__(self, bridge: RobotBridge, config: NavigationConfig | None = None):
         self.bridge = bridge
-        self.config = config or NavigationConfig()
+        self._base_config = config or NavigationConfig()
+        self.config = NavigationConfig(**vars(self._base_config))
         self.detector = TargetDetector(self.config)
         self.state = NavigationState()
         self.target_hint: TargetHint | None = None
@@ -32,6 +33,8 @@ class NavigationEngine:
     ) -> dict[str, Any]:
         self.state = NavigationState(target_label=target_label, phase=NavPhase.SEARCHING, message=f"searching for {target_label}")
         self._next_horizon_sequence = 1
+        self.config = NavigationConfig(**vars(self._base_config))
+        self.detector.config = self.config
         if success_distance_m is not None:
             self.config.success_distance_m = success_distance_m
         if success_heading_deg is not None:
@@ -60,8 +63,11 @@ class NavigationEngine:
             if result["phase"] in {NavPhase.SUCCESS.value, NavPhase.BLOCKED.value, NavPhase.NOT_FOUND.value, NavPhase.CANCELLED.value}:
                 return result
             if self.state.steps >= self.config.max_steps:
+                self.bridge.stop()
                 self.state.phase = NavPhase.BLOCKED
+                self.state.active_horizon_target = None
                 self.state.message = "maximum navigation steps reached"
+                self.state.history.append({"event": "max_steps_blocked"})
                 break
             if delay_s > 0.0:
                 time.sleep(delay_s)

@@ -174,10 +174,15 @@ class VideoStateOccupancyReceiver:
                         payload = self._recv_exact(conn, payload_len)
                     except (socket.timeout, ConnectionError, OSError):
                         break
-                    handler(payload)
+                    try:
+                        handler(payload)
+                    except Exception:
+                        continue
         server.close()
 
     def _handle_state_payload(self, payload: bytes) -> None:
+        if len(payload) != struct.calcsize("!ddd"):
+            return
         x, y, yaw = struct.unpack("!ddd", payload)
         with self.lock:
             self.latest_pose = (float(x), float(y), float(yaw))
@@ -187,6 +192,8 @@ class VideoStateOccupancyReceiver:
         if len(payload) < 8:
             return
         rows, cols = struct.unpack("!II", payload[:8])
+        if rows == 0 or cols == 0 or len(payload[8:]) != rows * cols:
+            return
         grid = np.frombuffer(payload[8:], dtype=np.uint8).reshape(rows, cols)
         with self.lock:
             self.latest_occupancy = grid.copy()
@@ -436,6 +443,24 @@ class Go2MoveBridge(RobotBridge):
         if not send_result.get("ok"):
             return send_result
         return {**send_result, **self._confirm_motion(command, before)}
+
+    def wait_until_ready(self, timeout_s: float | None = None) -> dict[str, Any]:
+        deadline = time.time() + (
+            self.config.remote_observation_wait_timeout_s if timeout_s is None else float(timeout_s)
+        )
+        while time.time() < deadline:
+            motion_connected = self.motion_server.is_connected()
+            latest = self.receiver.get_latest()
+            if motion_connected and latest.timestamp > 0.0:
+                return {"ok": True, "motion_connected": True, "observation_ready": True}
+            time.sleep(0.2)
+        latest = self.receiver.get_latest()
+        return {
+            "ok": False,
+            "motion_connected": self.motion_server.is_connected(),
+            "observation_ready": latest.timestamp > 0.0,
+            "reason": "bridge_not_ready",
+        }
 
     def _confirm_motion(self, command: ActionCommand | LocalHorizonCommand, before: Observation) -> dict[str, Any]:
         if isinstance(command, ActionCommand) and command.kind == "stop":

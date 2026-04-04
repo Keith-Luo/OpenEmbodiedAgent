@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -355,4 +355,4 @@ class Go2Driver(BaseDriver):
 
     @staticmethod
     def _stamp() -> str:
-        return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+        return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
